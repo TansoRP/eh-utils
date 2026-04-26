@@ -295,7 +295,20 @@ UserInputService.InputBegan:Connect(function(input, gpe)
         notify("ESP", ESP_ENABLED and "✅" or "❌")
     end
 end)
+Redesign graphique du bouton mobile
+Améliorations visuelles :
+
+Bouton circulaire moderne avec dégradé subtil
+Icône œil (ImageLabel) au lieu d'emoji texte
+Anneau lumineux animé (glow/pulse) selon l'état
+Indicateur de statut LED en bas
+Animations fluides via TweenService (hover/toggle)
+Effet de pression (scale down) au touch
+
+-- ========== BOUTON MOBILE (REDESIGN) ==========
 if UserInputService.TouchEnabled and not UserInputService.MouseEnabled then
+    local TweenService = game:GetService("TweenService")
+
     local mobileGui = Instance.new("ScreenGui")
     mobileGui.Name = "\0ESPMobile"
     mobileGui.ResetOnSpawn = false
@@ -304,62 +317,145 @@ if UserInputService.TouchEnabled and not UserInputService.MouseEnabled then
     pcall(function() mobileGui.Parent = CoreGui end)
     if not mobileGui.Parent then mobileGui.Parent = LocalPlayer:WaitForChild("PlayerGui") end
 
+    -- Conteneur principal (pour le scale au press)
+    local holder = Instance.new("Frame")
+    holder.Name = "Holder"
+    holder.Size = UDim2.fromOffset(64, 64)
+    holder.Position = UDim2.new(0, 24, 0.5, -32)
+    holder.BackgroundTransparency = 1
+    holder.Parent = mobileGui
+
+    -- Anneau lumineux extérieur (glow)
+    local glow = Instance.new("ImageLabel")
+    glow.Name = "Glow"
+    glow.Size = UDim2.fromScale(1.6, 1.6)
+    glow.Position = UDim2.fromScale(0.5, 0.5)
+    glow.AnchorPoint = Vector2.new(0.5, 0.5)
+    glow.BackgroundTransparency = 1
+    glow.Image = "rbxassetid://4996891970" -- soft radial glow
+    glow.ImageColor3 = Color3.fromRGB(0, 255, 140)
+    glow.ImageTransparency = 0.4
+    glow.Parent = holder
+
+    -- Bouton principal
     local btn = Instance.new("TextButton")
     btn.Name = "Toggle"
-    btn.Size = UDim2.fromOffset(60, 60)
-    btn.Position = UDim2.new(0, 20, 0.5, -30)
-    btn.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
-    btn.BackgroundTransparency = 0.25
+    btn.Size = UDim2.fromScale(1, 1)
+    btn.BackgroundColor3 = Color3.fromRGB(20, 22, 28)
+    btn.BackgroundTransparency = 0.05
     btn.BorderSizePixel = 0
-    btn.Font = Enum.Font.GothamBold
-    btn.TextSize = 14
-    btn.TextColor3 = Color3.fromRGB(0, 255, 100)
-    btn.TextStrokeTransparency = 0.5
-    btn.Text = "ESP\n✅"
+    btn.Text = ""
     btn.AutoButtonColor = false
     btn.Active = true
-    btn.Parent = mobileGui
+    btn.Parent = holder
 
     local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(0, 10)
+    corner.CornerRadius = UDim.new(1, 0)
     corner.Parent = btn
 
+    -- Dégradé interne
+    local gradient = Instance.new("UIGradient")
+    gradient.Rotation = 90
+    gradient.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(38, 42, 52)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(15, 16, 22)),
+    })
+    gradient.Parent = btn
+
+    -- Stroke fin
     local stroke = Instance.new("UIStroke")
-    stroke.Thickness = 1.5
-    stroke.Color = Color3.fromRGB(0, 255, 100)
+    stroke.Thickness = 2
+    stroke.Color = Color3.fromRGB(0, 255, 140)
+    stroke.Transparency = 0.1
+    stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
     stroke.Parent = btn
 
+    -- Icône œil
+    local icon = Instance.new("ImageLabel")
+    icon.Name = "Icon"
+    icon.Size = UDim2.fromScale(0.55, 0.55)
+    icon.Position = UDim2.fromScale(0.5, 0.42)
+    icon.AnchorPoint = Vector2.new(0.5, 0.5)
+    icon.BackgroundTransparency = 1
+    icon.Image = "rbxassetid://10709790644" -- eye icon (Roblox lucide)
+    icon.ImageColor3 = Color3.fromRGB(0, 255, 140)
+    icon.Parent = btn
+
+    -- LED de statut
+    local led = Instance.new("Frame")
+    led.Name = "LED"
+    led.Size = UDim2.fromOffset(8, 8)
+    led.Position = UDim2.fromScale(0.5, 0.82)
+    led.AnchorPoint = Vector2.new(0.5, 0.5)
+    led.BackgroundColor3 = Color3.fromRGB(0, 255, 140)
+    led.BorderSizePixel = 0
+    led.Parent = btn
+
+    local ledCorner = Instance.new("UICorner")
+    ledCorner.CornerRadius = UDim.new(1, 0)
+    ledCorner.Parent = led
+
+    local ledStroke = Instance.new("UIStroke")
+    ledStroke.Color = Color3.fromRGB(0, 255, 140)
+    ledStroke.Thickness = 3
+    ledStroke.Transparency = 0.6
+    ledStroke.Parent = led
+
+    -- Animation de pulsation du glow
+    local pulseRunning = true
+    task.spawn(function()
+        while pulseRunning and holder.Parent do
+            TweenService:Create(glow, TweenInfo.new(1.2, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {ImageTransparency = 0.7}):Play()
+            task.wait(1.2)
+            TweenService:Create(glow, TweenInfo.new(1.2, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {ImageTransparency = 0.35}):Play()
+            task.wait(1.2)
+        end
+    end)
+
+    -- Fonction de mise à jour visuelle de l'état
+    local function applyState(enabled: boolean)
+        local col = enabled and Color3.fromRGB(0, 255, 140) or Color3.fromRGB(255, 70, 90)
+        local tweenInfo = TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+        TweenService:Create(stroke, tweenInfo, {Color = col}):Play()
+        TweenService:Create(icon, tweenInfo, {ImageColor3 = col}):Play()
+        TweenService:Create(glow, tweenInfo, {ImageColor3 = col}):Play()
+        TweenService:Create(led, tweenInfo, {BackgroundColor3 = col}):Play()
+        TweenService:Create(ledStroke, tweenInfo, {Color = col}):Play()
+    end
+
+    -- Drag + Press
     local dragging, dragStart, startPos, moved = false, nil, nil, false
+
     btn.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.Touch then
             dragging = true
             moved = false
             dragStart = input.Position
-            startPos = btn.Position
+            startPos = holder.Position
+            TweenService:Create(holder, TweenInfo.new(0.12, Enum.EasingStyle.Quad), {Size = UDim2.fromOffset(58, 58)}):Play()
         end
     end)
+
     btn.InputChanged:Connect(function(input)
         if dragging and input.UserInputType == Enum.UserInputType.Touch then
             local delta = input.Position - dragStart
             if delta.Magnitude > 6 then moved = true end
-            btn.Position = UDim2.new(
+            holder.Position = UDim2.new(
                 startPos.X.Scale, startPos.X.Offset + delta.X,
                 startPos.Y.Scale, startPos.Y.Offset + delta.Y
             )
         end
     end)
+
     btn.InputEnded:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.Touch then
             dragging = false
+            TweenService:Create(holder, TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Size = UDim2.fromOffset(64, 64)}):Play()
             if not moved then
                 ESP_ENABLED = not ESP_ENABLED
-                btn.Text = "ESP\n"..(ESP_ENABLED and "✅" or "❌")
-                local col = ESP_ENABLED and Color3.fromRGB(0, 255, 100) or Color3.fromRGB(255, 80, 80)
-                btn.TextColor3 = col
-                stroke.Color = col
-                notify("ESP", ESP_ENABLED and "✅" or "❌")
+                applyState(ESP_ENABLED)
+                notify("ESP", ESP_ENABLED and "✅ Activé" or "❌ Désactivé")
             end
         end
     end)
 end
-
