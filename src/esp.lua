@@ -295,4 +295,71 @@ UserInputService.InputBegan:Connect(function(input, gpe)
         notify("ESP", ESP_ENABLED and "✅" or "❌")
     end
 end)
+if UserInputService.TouchEnabled and not UserInputService.MouseEnabled then
+    local mobileGui = Instance.new("ScreenGui")
+    mobileGui.Name = "\0ESPMobile"
+    mobileGui.ResetOnSpawn = false
+    mobileGui.IgnoreGuiInset = true
+    mobileGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    pcall(function() mobileGui.Parent = CoreGui end)
+    if not mobileGui.Parent then mobileGui.Parent = LocalPlayer:WaitForChild("PlayerGui") end
+
+    local btn = Instance.new("TextButton")
+    btn.Name = "Toggle"
+    btn.Size = UDim2.fromOffset(60, 60)
+    btn.Position = UDim2.new(0, 20, 0.5, -30)
+    btn.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
+    btn.BackgroundTransparency = 0.25
+    btn.BorderSizePixel = 0
+    btn.Font = Enum.Font.GothamBold
+    btn.TextSize = 14
+    btn.TextColor3 = Color3.fromRGB(0, 255, 100)
+    btn.TextStrokeTransparency = 0.5
+    btn.Text = "ESP\n✅"
+    btn.AutoButtonColor = false
+    btn.Active = true
+    btn.Parent = mobileGui
+
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 10)
+    corner.Parent = btn
+
+    local stroke = Instance.new("UIStroke")
+    stroke.Thickness = 1.5
+    stroke.Color = Color3.fromRGB(0, 255, 100)
+    stroke.Parent = btn
+
+    local dragging, dragStart, startPos, moved = false, nil, nil, false
+    btn.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            moved = false
+            dragStart = input.Position
+            startPos = btn.Position
+        end
+    end)
+    btn.InputChanged:Connect(function(input)
+        if dragging and input.UserInputType == Enum.UserInputType.Touch then
+            local delta = input.Position - dragStart
+            if delta.Magnitude > 6 then moved = true end
+            btn.Position = UDim2.new(
+                startPos.X.Scale, startPos.X.Offset + delta.X,
+                startPos.Y.Scale, startPos.Y.Offset + delta.Y
+            )
+        end
+    end)
+    btn.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.Touch then
+            dragging = false
+            if not moved then
+                ESP_ENABLED = not ESP_ENABLED
+                btn.Text = "ESP\n"..(ESP_ENABLED and "✅" or "❌")
+                local col = ESP_ENABLED and Color3.fromRGB(0, 255, 100) or Color3.fromRGB(255, 80, 80)
+                btn.TextColor3 = col
+                stroke.Color = col
+                notify("ESP", ESP_ENABLED and "✅" or "❌")
+            end
+        end
+    end)
+end
 
