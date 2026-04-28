@@ -1,44 +1,25 @@
 --!strict
--- ══════════════════════════════════════════════════════════════════════════════
---  SERVICES
--- ══════════════════════════════════════════════════════════════════════════════
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local CoreGui          = game:GetService("CoreGui")
 local TweenService     = game:GetService("TweenService")
 local StarterGui       = game:GetService("StarterGui")
-
--- ══════════════════════════════════════════════════════════════════════════════
---  LOCALS
--- ══════════════════════════════════════════════════════════════════════════════
 local LocalPlayer  = Players.LocalPlayer
 local Camera       = workspace.CurrentCamera
 local ESP_ENABLED  = true
 local MAX_DISTANCE = 5000
-
--- ══════════════════════════════════════════════════════════════════════════════
---  CONTENEUR
--- ══════════════════════════════════════════════════════════════════════════════
 local Container = Instance.new("Folder")
 Container.Name = "\0ESP"
 pcall(function() Container.Parent = CoreGui end)
 if not Container.Parent then
     Container.Parent = LocalPlayer:WaitForChild("PlayerGui")
 end
-
--- ══════════════════════════════════════════════════════════════════════════════
---  TYPES
--- ══════════════════════════════════════════════════════════════════════════════
 type ESPEntry = {
     Highlight : Highlight,
     Billboard : BillboardGui,
 }
 local Cache: { [Player]: ESPEntry } = {}
-
--- ══════════════════════════════════════════════════════════════════════════════
---  UTILITAIRES
--- ══════════════════════════════════════════════════════════════════════════════
 local function notify(title: string, text: string)
     pcall(function()
         StarterGui:SetCore("SendNotification", {
@@ -48,10 +29,7 @@ local function notify(title: string, text: string)
         })
     end)
 end
-
--- Clipboard ciblé Xeno / Delta
 local function copyToClipboard(text: string): boolean
-    -- setclipboard est global sur Xeno et Delta
     if setclipboard then
         setclipboard(text)
         return true
@@ -63,40 +41,30 @@ local function getJobInfo(player: Player): (string, Color3)
     if player.Team then
         local n = player.Team.Name:lower()
         if n:find("police") or n:find("polizei") then
-            return "POLICE", Color3.fromRGB(30, 144, 255)
+            return "POLICE", Color3.fromRGB(0, 44, 88)
         end
         if n:find("medic") or n:find("rettung") or n:find("sanit") then
-            return "MEDIC", Color3.fromRGB(255, 255, 255)
+            return "MEDIC", Color3.fromRGB(216, 0, 0)
         end
         if n:find("fire") or n:find("feuer") then
-            return "FIRE", Color3.fromRGB(255, 100, 0)
-        end
-        if n:find("crim") then
-            return "CRIMINAL", Color3.fromRGB(255, 0, 150)
+            return "FIRE", Color3.fromRGB(117, 0, 0)
         end
     end
-    return "CIVIL", Color3.fromRGB(255, 255, 100)
+    return "CIVIL", Color3.fromRGB(12, 255, 174)
 end
 
--- ══════════════════════════════════════════════════════════════════════════════
---  CRÉATION ESP
--- ══════════════════════════════════════════════════════════════════════════════
 local function addESP(player: Player)
     if player == LocalPlayer then return end
     if Cache[player] then return end
-
-    -- Highlight
     local highlight = Instance.new("Highlight")
     highlight.Name               = "H_" .. player.Name
     highlight.FillTransparency   = 0.5
     highlight.OutlineTransparency = 0
     highlight.DepthMode          = Enum.HighlightDepthMode.AlwaysOnTop
     highlight.Parent             = Container
-
-    -- Billboard
     local billboard = Instance.new("BillboardGui")
     billboard.Name            = "B_" .. player.Name
-    billboard.Size            = UDim2.new(0, 230, 0, 58)
+    billboard.Size            = UDim2.new(0, 100, 0, 20)
     billboard.StudsOffset     = Vector3.new(0, 5, 0)
     billboard.AlwaysOnTop     = true
     billboard.LightInfluence  = 0
@@ -104,59 +72,38 @@ local function addESP(player: Player)
     billboard.MaxDistance     = MAX_DISTANCE
     billboard.ZIndexBehavior  = Enum.ZIndexBehavior.Sibling
     billboard.Parent          = Container
-
-    -- Frame principale
     local frame = Instance.new("Frame")
     frame.Size            = UDim2.fromScale(1, 1)
-    frame.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
-    frame.BackgroundTransparency = 0.25
+    frame.BackgroundColor3 = Color3.fromRGB(230, 230, 253)
+    frame.BackgroundTransparency = 0.75
     frame.BorderSizePixel = 0
     frame.Parent          = billboard
-
     local corner = Instance.new("UICorner")
     corner.CornerRadius = UDim.new(0, 8)
     corner.Parent = frame
-
     local stroke = Instance.new("UIStroke")
-    stroke.Color     = Color3.fromRGB(255, 255, 100)
+    stroke.Color     = Color3.fromRGB(245, 0, 0)
     stroke.Thickness = 1.5
     stroke.Parent    = frame
-
-    -- Label nom
-    local nameLabel = Instance.new("TextLabel")
-    nameLabel.Name                = "NameLabel"
-    nameLabel.Size                = UDim2.new(1, -10, 0.5, 0)
-    nameLabel.Position            = UDim2.new(0, 8, 0, 4)
-    nameLabel.BackgroundTransparency = 1
-    nameLabel.TextColor3          = Color3.fromRGB(255, 255, 255)
-    nameLabel.TextSize            = 13
-    nameLabel.Font                = Enum.Font.GothamBold
-    nameLabel.TextXAlignment      = Enum.TextXAlignment.Left
-    nameLabel.Text                = "@" .. player.Name
-    nameLabel.Parent              = frame
-
-    -- Label job
-    local jobLabel = Instance.new("TextLabel")
-    jobLabel.Name                 = "JobLabel"
-    jobLabel.Size                 = UDim2.new(1, -10, 0.4, 0)
-    jobLabel.Position             = UDim2.new(0, 8, 0.55, 0)
-    jobLabel.BackgroundTransparency = 1
-    jobLabel.TextSize             = 11
-    jobLabel.Font                 = Enum.Font.Gotham
-    jobLabel.TextXAlignment       = Enum.TextXAlignment.Left
-    jobLabel.Parent               = frame
-
-    -- Bouton invisible sur tout le billboard pour le clic
+   local nameLabel = Instance.new("TextLabel")
+   nameLabel.Name                   = "NameLabel"
+   nameLabel.Size          = UDim2.new(1, 0, 0.5, 0)
+   nameLabel.Position      = UDim2.new(0, 0, 0, 0)
+   nameLabel.TextXAlignment = Enum.TextXAlignment.Center
+nameLabel.TextYAlignment = Enum.TextYAlignment.Center  
+   nameLabel.BackgroundTransparency = 1
+   nameLabel.TextColor3             = Color3.fromRGB(0, 0, 0)
+   nameLabel.Font                   = Enum.Font.GothamBold
+   nameLabel.TextScaled             = true   
+   nameLabel.Text                   = ":" .. player.Name
+   nameLabel.Parent                 = frame
     local clickBtn = Instance.new("TextButton")
     clickBtn.Size                 = UDim2.fromScale(1, 1)
     clickBtn.BackgroundTransparency = 1
     clickBtn.Text                 = ""
     clickBtn.ZIndex               = 10
     clickBtn.Parent               = frame
-
-    -- Cooldown anti-spam
     local lastClick = 0
-
     clickBtn.MouseButton1Click:Connect(function()
         local now = tick()
         if now - lastClick < 0.6 then return end
@@ -165,20 +112,15 @@ local function addESP(player: Player)
         local tag = "" .. player.Name
         local ok = copyToClipboard(tag)
         if ok then
-            notify("📋 Copié", tag)
+            notify("Copied", tag)
         else
-            -- Fallback visible dans la console
             warn("[ESP] setclipboard indisponible — pseudo : " .. tag)
-            notify("⚠️ Erreur", "Clipboard indisponible")
+            notify("Bug", "Contact owner")
         end
     end)
 
     Cache[player] = { Highlight = highlight, Billboard = billboard }
 end
-
--- ══════════════════════════════════════════════════════════════════════════════
---  SUPPRESSION ESP
--- ══════════════════════════════════════════════════════════════════════════════
 local function removeESP(player: Player)
     local entry = Cache[player]
     if not entry then return end
@@ -187,18 +129,12 @@ local function removeESP(player: Player)
     Cache[player] = nil
 end
 
--- ══════════════════════════════════════════════════════════════════════════════
---  INIT JOUEURS
--- ══════════════════════════════════════════════════════════════════════════════
 for _, p in Players:GetPlayers() do
     task.spawn(addESP, p)
 end
 Players.PlayerAdded:Connect(addESP)
 Players.PlayerRemoving:Connect(removeESP)
 
--- ══════════════════════════════════════════════════════════════════════════════
---  LOOP PRINCIPALE
--- ══════════════════════════════════════════════════════════════════════════════
 RunService.Heartbeat:Connect(function()
     if not ESP_ENABLED then
         for _, entry in Cache do
@@ -225,7 +161,7 @@ RunService.Heartbeat:Connect(function()
             continue
         end
 
-        -- Distance
+        -- Sa mere la pute la distance enfin
         local camPos  = Camera.CFrame.Position
         local dist    = (hrp.Position - camPos).Magnitude
         local inRange = dist <= MAX_DISTANCE
@@ -255,20 +191,15 @@ RunService.Heartbeat:Connect(function()
     end
 end)
 
--- ══════════════════════════════════════════════════════════════════════════════
---  TOGGLE T (clavier) + bouton mobile
--- ══════════════════════════════════════════════════════════════════════════════
 
--- Clavier
+-- T 
 UserInputService.InputBegan:Connect(function(input: InputObject, gpe: boolean)
     if gpe then return end
     if input.KeyCode == Enum.KeyCode.T then
         ESP_ENABLED = not ESP_ENABLED
-        notify("ESP", ESP_ENABLED and "✅ Activé" or "❌ Désactivé")
+        notify("ESP", ESP_ENABLED and "Activer" or "Cacher")
     end
 end)
-
--- Bouton mobile
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name              = "ESPToggleGui"
 screenGui.ResetOnSpawn      = false
@@ -287,17 +218,13 @@ holder.BackgroundColor3      = Color3.fromRGB(15, 15, 20)
 holder.BackgroundTransparency = 0.2
 holder.BorderSizePixel       = 0
 holder.Parent                = screenGui
-
 local holderCorner = Instance.new("UICorner")
 holderCorner.CornerRadius = UDim.new(1, 0)
 holderCorner.Parent = holder
-
 local holderStroke = Instance.new("UIStroke")
 holderStroke.Color     = Color3.fromRGB(0, 255, 140)
 holderStroke.Thickness = 2
 holderStroke.Parent    = holder
-
--- Icône œil
 local icon = Instance.new("ImageLabel")
 icon.Size                  = UDim2.fromOffset(34, 34)
 icon.Position              = UDim2.new(0.5, -17, 0.5, -17)
@@ -306,8 +233,6 @@ icon.Image                 = "rbxassetid://73235408221031"
 icon.ImageColor3           = Color3.fromRGB(0, 255, 140)
 icon.ScaleType             = Enum.ScaleType.Fit
 icon.Parent                = holder
-
--- Glow
 local glow = Instance.new("ImageLabel")
 glow.Size                  = UDim2.fromOffset(80, 80)
 glow.Position              = UDim2.new(0.5, -40, 0.5, -40)
@@ -317,8 +242,6 @@ glow.ImageColor3           = Color3.fromRGB(0, 255, 140)
 glow.ImageTransparency     = 0.5
 glow.ZIndex                = 0
 glow.Parent                = holder
-
--- LED
 local led = Instance.new("Frame")
 led.Size             = UDim2.fromOffset(10, 10)
 led.Position         = UDim2.new(1, -12, 0, 2)
@@ -326,7 +249,6 @@ led.BackgroundColor3 = Color3.fromRGB(0, 255, 140)
 led.BorderSizePixel  = 0
 led.ZIndex           = 5
 led.Parent           = holder
-
 local ledCorner = Instance.new("UICorner")
 ledCorner.CornerRadius = UDim.new(1, 0)
 ledCorner.Parent = led
@@ -335,16 +257,12 @@ local ledStroke = Instance.new("UIStroke")
 ledStroke.Color     = Color3.fromRGB(255, 255, 255)
 ledStroke.Thickness = 1
 ledStroke.Parent    = led
-
--- Bouton invisible
 local btn = Instance.new("TextButton")
 btn.Size                  = UDim2.fromScale(1, 1)
 btn.BackgroundTransparency = 1
 btn.Text                  = ""
 btn.ZIndex                = 10
 btn.Parent                = holder
-
--- Pulse
 task.spawn(function()
     while holder.Parent do
         TweenService:Create(glow,
@@ -359,7 +277,6 @@ task.spawn(function()
         task.wait(1.2)
     end
 end)
-
 local function applyState(enabled: boolean)
     local col      = enabled and Color3.fromRGB(0, 255, 140) or Color3.fromRGB(255, 70, 90)
     local tweenInfo = TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
@@ -369,13 +286,10 @@ local function applyState(enabled: boolean)
     TweenService:Create(led,         tweenInfo, { BackgroundColor3 = col }):Play()
     TweenService:Create(ledStroke,   tweenInfo, { Color = col }):Play()
 end
-
--- Drag + tap
 local dragging  = false
 local dragStart: Vector3? = nil
 local startPos: UDim2?   = nil
 local moved     = false
-
 btn.InputBegan:Connect(function(input: InputObject)
     if input.UserInputType ~= Enum.UserInputType.Touch then return end
     dragging  = true
@@ -387,7 +301,6 @@ btn.InputBegan:Connect(function(input: InputObject)
         { Size = UDim2.fromOffset(58, 58) }
     ):Play()
 end)
-
 btn.InputChanged:Connect(function(input: InputObject)
     if not dragging then return end
     if input.UserInputType ~= Enum.UserInputType.Touch then return end
@@ -399,7 +312,6 @@ btn.InputChanged:Connect(function(input: InputObject)
         sp.Y.Scale, sp.Y.Offset + delta.Y
     )
 end)
-
 btn.InputEnded:Connect(function(input: InputObject)
     if input.UserInputType ~= Enum.UserInputType.Touch then return end
     dragging = false
@@ -410,6 +322,6 @@ btn.InputEnded:Connect(function(input: InputObject)
     if not moved then
         ESP_ENABLED = not ESP_ENABLED
         applyState(ESP_ENABLED)
-        notify("ESP", ESP_ENABLED and "✅ Activé" or "❌ Désactivé")
+        notify("ESP", ESP_ENABLED and "Allumé" or "Eteint")
     end
 end)
