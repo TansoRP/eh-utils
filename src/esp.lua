@@ -1,477 +1,356 @@
 --!strict
--- ╔══════════════════════════════════════════════════════════════╗
--- ║  ESP  ·  LocalScript  ·  Security Test PoC                  ║
--- ║  Auteur : collaboration développeur / test anticheat         ║
--- ║  Usage  : cadre de test de sécurité autorisé uniquement      ║
--- ╚══════════════════════════════════════════════════════════════╝
+-- ─── 1. Globals (locals = +rapide, -hooks détectables) ───────────────────────
+local _pcall      = pcall
+local _mathrandom = math.random
+local _mathfloor  = math.floor
+local _osclock    = os.clock
+local _stringbyte = string.byte
+local _stringchar = string.char
+local _tableconcat= table.concat
+local _bxor       = bit32.bxor
 
--- ─── Services ────────────────────────────────────────────────────────────────
-local Players          = game:GetService("Players")
-local RunService       = game:GetService("RunService")
-local UserInputService = game:GetService("UserInputService")
-local CoreGui          = game:GetService("CoreGui")
-local TweenService     = game:GetService("TweenService")
-local StarterGui       = game:GetService("StarterGui")
+-- ─── 2. Services ──────────────────────────────────────────────────────────────
+local Players    = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UIS        = game:GetService("UserInputService")
+local CAS        = game:GetService("ContextActionService")
+local Workspace  = workspace
+local Camera     = Workspace.CurrentCamera
+local LP         = Players.LocalPlayer
+if not LP then return end
 
--- ─── Références locales ───────────────────────────────────────────────────────
-local LocalPlayer = Players.LocalPlayer
-local Camera      = workspace.CurrentCamera
-
--- ─── Configuration ────────────────────────────────────────────────────────────
-local ESP_ENABLED  = true
-local MAX_DISTANCE = 5000
-
--- ─── Utilitaires d'indétectabilité ───────────────────────────────────────────
--- Génère un nom d'instance aléatoire pour éviter les patterns fixes
--- scannés par les anticheat basés sur regex/nom d'instance.
-local CHARSET = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-local function randomName(len: number): string
-    local out = {}
-    for _ = 1, len do
-        local idx = math.random(1, #CHARSET)
-        out[#out + 1] = CHARSET:sub(idx, idx)
-    end
-    return table.concat(out)
-end
-
--- Wrappers d'accès aux fonctions executor — évite les détections par
--- scan de globals non-standard exposées en clair dans le bytecode.
-local _setclipboard: ((s: string) -> ())? = (getfenv :: any)()["set" .. "clipboard"]
-
--- ─── Conteneur ESP (CoreGui ou PlayerGui fallback) ────────────────────────────
--- Le nom du conteneur est randomisé à chaque exécution.
-local Container: Folder
+-- ─── 3. Drawing ───────────────────────────────────────────────────────────────
+local _Drawing: any
 do
-    local f = Instance.new("Folder")
-    f.Name = randomName(12) -- nom aléatoire, non signable par regex
-    local ok = pcall(function() f.Parent = CoreGui end)
-    if not ok or not f.Parent then
-        f.Parent = LocalPlayer:WaitForChild("PlayerGui")
+    for _, src in {
+        function() return (_G    :: any).Drawing end,
+        function() return (shared:: any).Drawing end,
+        function() return getfenv and (getfenv :: any)(0)["Drawing"] or nil end,
+    } do
+        local ok, v = _pcall(src)
+        if ok and v ~= nil then _Drawing = v; break end
     end
-    Container = f
+    if not _Drawing then return end
 end
 
--- ─── Types ────────────────────────────────────────────────────────────────────
-type ESPEntry = {
-    Highlight : Highlight,
-    Billboard : BillboardGui,
-    Connections: { RBXScriptConnection },
+local function newDraw(kind: string): any
+    local ok, obj = _pcall(function() return _Drawing.new(kind) end)
+    return ok and obj or nil
+end
+
+-- ─── 4. newcclosure ───────────────────────────────────────────────────────────
+local _newcc: (((...any)->...any)->(...any)->...any)
+do
+    local id = function(f) return f end
+    local found: any = nil
+    for _, src in {
+        function() return getfenv and (getfenv :: any)(0)["newcclosure"] or nil end,
+        function() return (_G    :: any).newcclosure end,
+        function() return (shared:: any).newcclosure end,
+    } do
+        local ok, v = _pcall(src)
+        if ok and type(v) == "function" then found = v; break end
+    end
+    _newcc = found or id
+end
+
+-- ─── 5. Clipboard ─────────────────────────────────────────────────────────────
+local _clip: (s: string) -> ()
+do
+    local found: any = nil
+    for _, src in {
+        function() return getfenv and (getfenv :: any)(0)["setclipboard"] or nil end,
+        function() return (_G    :: any).setclipboard end,
+        function() return (shared:: any).setclipboard end,
+        function() return getfenv and (getfenv :: any)(0)["toclipboard"] or nil end,
+        function() return (_G    :: any).toclipboard end,
+    } do
+        local ok, v = _pcall(src)
+        if ok and type(v) == "function" then found = v; break end
+    end
+    _clip = found or function() end
+end
+
+-- ─── 6. String obfuscation (XOR léger) ────────────────────────────────────────
+local KEY = 0x5A
+local function enc(s: string): {number}
+    local t = {}
+    for i = 1, #s do t[i] = _bxor(_stringbyte(s, i), KEY) end
+    return t
+end
+local function dec(t: {number}): string
+    local out = {}
+    for i, b in t do out[i] = _stringchar(_bxor(b, KEY)) end
+    return _tableconcat(out)
+end
+
+local S = {
+    on    = enc("ESP ON [T]"),
+    off   = enc("ESP OFF [T]"),
+    copy  = enc("Copie : @"),
 }
 
--- ─── Cache ────────────────────────────────────────────────────────────────────
-local Cache: { [Player]: ESPEntry } = {}
+-- ─── 7. Config ────────────────────────────────────────────────────────────────
+local CFG = {
+    key       = Enum.KeyCode.T,
+    pollRate  = 1.25,
+    maxDist   = 600,
+    textSize  = 14,
+    font      = 2,
+    color     = Color3.fromRGB(255, 255, 255),
+    outline   = true,
+    onColor   = Color3.fromRGB(120, 255, 120),
+    offColor  = Color3.fromRGB(255, 120, 120),
+    feedColor = Color3.fromRGB(255, 220, 120),
+    padding   = 8,
+}
 
--- ─── Helpers UI ──────────────────────────────────────────────────────────────
-local function notify(title: string, text: string)
-    pcall(StarterGui.SetCore, StarterGui, "SendNotification", {
-        Title    = title,
-        Text     = text,
-        Duration = 2,
-    })
+-- ─── 8. State ─────────────────────────────────────────────────────────────────
+type Entry = {
+    player  : Player,
+    label   : any,
+    visible : boolean,
+    bbX     : number,
+    bbY     : number,
+    bbW     : number,
+    bbH     : number,
+}
+
+local Cache: {[number]: Entry} = {}
+local enabled = false
+
+-- ─── 9. Feed (HUD) ────────────────────────────────────────────────────────────
+local feedLabel: any = newDraw("Text")
+local feedUntil = 0
+if feedLabel then
+    feedLabel.Center   = true
+    feedLabel.Outline  = true
+    feedLabel.Font     = CFG.font
+    feedLabel.Size     = 16
+    feedLabel.Color    = CFG.feedColor
+    feedLabel.Visible  = false
 end
 
-local function copyToClipboard(text: string): boolean
-    if _setclipboard then
-        _setclipboard(text)
-        return true
-    end
-    return false
-end
-
--- ─── Logique métier ──────────────────────────────────────────────────────────
--- Retourne le rôle et la couleur associée selon l'équipe du joueur.
-local function getJobInfo(player: Player): (string, Color3)
-    if player.Team then
-        local n = player.Team.Name:lower()
-        if n:find("police") or n:find("polizei") then
-            return "POLICE", Color3.fromRGB(0, 44, 88)
-        end
-        if n:find("medic") or n:find("rettung") or n:find("sanit") then
-            return "MEDIC", Color3.fromRGB(216, 0, 0)
-        end
-        if n:find("fire") or n:find("feuer") then
-            return "FIRE", Color3.fromRGB(117, 0, 0)
-        end
-    end
-    return "CIVIL", Color3.fromRGB(12, 255, 174)
-end
-
--- ─── Création de l'ESP par joueur ─────────────────────────────────────────────
-local function addESP(player: Player)
-    if player == LocalPlayer then return end
-    if Cache[player] then return end
-
-    local connections: { RBXScriptConnection } = {}
-
-    -- Highlight — adornee assigné dynamiquement dans le Heartbeat
-    local highlight = Instance.new("Highlight")
-    highlight.Name                = randomName(8)
-    highlight.FillTransparency    = 0.5
-    highlight.OutlineTransparency = 0
-    highlight.DepthMode           = Enum.HighlightDepthMode.AlwaysOnTop
-    highlight.Enabled             = false
-    highlight.Parent              = Container
-
-    -- Billboard
-    local billboard = Instance.new("BillboardGui")
-    billboard.Name           = randomName(8)
-    billboard.Size           = UDim2.new(0, 120, 0, 38)
-    billboard.StudsOffset    = Vector3.new(0, 3.2, 0)
-    billboard.AlwaysOnTop    = true
-    billboard.LightInfluence = 0
-    billboard.Active         = true
-    billboard.MaxDistance    = MAX_DISTANCE
-    billboard.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-    billboard.Enabled        = false
-    billboard.Parent         = Container
-
-    -- Fond arrondi
-    local frame = Instance.new("Frame")
-    frame.Size                   = UDim2.fromScale(1, 1)
-    frame.BackgroundColor3       = Color3.fromRGB(15, 15, 20)
-    frame.BackgroundTransparency = 0.25
-    frame.BorderSizePixel        = 0
-    frame.Parent                 = billboard
-
-    local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(0, 8)
-    corner.Parent       = frame
-
-    local stroke = Instance.new("UIStroke")
-    stroke.Name      = "JobStroke"
-    stroke.Color     = Color3.fromRGB(245, 0, 0)
-    stroke.Thickness = 1.5
-    stroke.Parent    = frame
-
-    -- Layout vertical pour les deux labels
-    local layout = Instance.new("UIListLayout")
-    layout.FillDirection       = Enum.FillDirection.Vertical
-    layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-    layout.VerticalAlignment   = Enum.VerticalAlignment.Center
-    layout.Padding             = UDim.new(0, 1)
-    layout.Parent              = frame
-
-    -- Label nom
-    local nameLabel = Instance.new("TextLabel")
-    nameLabel.Name                   = "NameLabel"
-    nameLabel.Size                   = UDim2.new(1, 0, 0, 18)
-    nameLabel.BackgroundTransparency = 1
-    nameLabel.TextColor3             = Color3.fromRGB(235, 235, 255)
-    nameLabel.Font                   = Enum.Font.GothamBold
-    nameLabel.TextSize               = 12
-    nameLabel.TextXAlignment         = Enum.TextXAlignment.Center
-    nameLabel.TextYAlignment         = Enum.TextYAlignment.Center
-    nameLabel.Text                   = "" .. player.Name
-    nameLabel.Parent                 = frame
-
-    -- Label job (manquant dans l'original — bug corrigé)
-    local jobLabel = Instance.new("TextLabel")
-    jobLabel.Name                   = "JobLabel"
-    jobLabel.Size                   = UDim2.new(1, 0, 0, 14)
-    jobLabel.BackgroundTransparency = 1
-    jobLabel.Font                   = Enum.Font.Gotham
-    jobLabel.TextSize               = 10
-    jobLabel.TextXAlignment         = Enum.TextXAlignment.Center
-    jobLabel.TextYAlignment         = Enum.TextYAlignment.Center
-    jobLabel.Text                   = "CIVIL"
-    jobLabel.TextColor3             = Color3.fromRGB(12, 255, 174)
-    jobLabel.Parent                 = frame
-
-    -- Bouton clic (copie du pseudo)
-    local clickBtn = Instance.new("TextButton")
-    clickBtn.Size                   = UDim2.fromScale(1, 1)
-    clickBtn.BackgroundTransparency = 1
-    clickBtn.Text                   = ""
-    clickBtn.ZIndex                 = 10
-    clickBtn.Parent                 = frame
-
-    local lastClick = 0
-    local c1 = clickBtn.MouseButton1Click:Connect(function()
-        local now = tick()
-        if now - lastClick < 0.6 then return end
-        lastClick = now
-        local tag = "@" .. player.Name
-        if copyToClipboard(tag) then
-            notify("ESP · Copié", tag)
-        else
-            notify("ESP · Info", "setclipboard indisponible")
-        end
+local function showFeed(text: string, color: Color3, dur: number)
+    if not feedLabel then return end
+    _pcall(function()
+        local vp = Camera.ViewportSize
+        feedLabel.Position = Vector2.new(vp.X / 2, 40)
+        feedLabel.Text     = text
+        feedLabel.Color    = color
+        feedLabel.Visible  = true
     end)
-    connections[#connections + 1] = c1
+    feedUntil = _osclock() + dur
+end
 
-    Cache[player] = {
-        Highlight   = highlight,
-        Billboard   = billboard,
-        Connections = connections,
+-- ─── 10. Entry mgmt ───────────────────────────────────────────────────────────
+local function destroyEntry(e: Entry)
+    if e.label then _pcall(function() e.label:Remove() end) end
+end
+
+local function makeEntry(plr: Player): Entry
+    local lbl = newDraw("Text")
+    if lbl then
+        lbl.Center   = true
+        lbl.Outline  = CFG.outline
+        lbl.Font     = CFG.font
+        lbl.Size     = CFG.textSize
+        lbl.Color    = CFG.color
+        lbl.Visible  = false
+    end
+    return {
+        player = plr, label = lbl, visible = false,
+        bbX = 0, bbY = 0, bbW = 0, bbH = 0,
     }
 end
 
--- ─── Suppression propre de l'ESP ──────────────────────────────────────────────
-local function removeESP(player: Player)
-    local entry = Cache[player]
-    if not entry then return end
+-- ─── 11. Poll ─────────────────────────────────────────────────────────────────
+local function poll()
+    local seen: {[number]: boolean} = {}
+    for _, plr in Players:GetPlayers() do
+        if plr ~= LP then
+            seen[plr.UserId] = true
+            if not Cache[plr.UserId] then
+                Cache[plr.UserId] = makeEntry(plr)
+            end
+        end
+    end
+    for uid, entry in Cache do
+        if not seen[uid] then
+            destroyEntry(entry)
+            Cache[uid] = nil
+        end
+    end
+end
 
-    -- Déconnexion des événements avant destruction (évite les fuites)
-    for _, conn in entry.Connections do
-        conn:Disconnect()
+-- ─── 12. Render ───────────────────────────────────────────────────────────────
+local function renderEntry(entry: Entry)
+    local lbl = entry.label
+    if not lbl then return end
+
+    if not enabled then
+        if entry.visible then lbl.Visible = false; entry.visible = false end
+        return
     end
 
-    pcall(function() entry.Highlight:Destroy() end)
-    pcall(function() entry.Billboard:Destroy() end)
-    Cache[player] = nil
+    local plr = entry.player
+    local char = plr.Character
+    if not char then lbl.Visible = false; entry.visible = false; return end
+    local head = char:FindFirstChild("Head")
+    local hrp  = char:FindFirstChild("HumanoidRootPart")
+    if not head or not hrp then lbl.Visible = false; entry.visible = false; return end
+
+    local myChar = LP.Character
+    local myHrp  = myChar and myChar:FindFirstChild("HumanoidRootPart")
+    if myHrp then
+        local d = (myHrp.Position - hrp.Position).Magnitude
+        if d > CFG.maxDist then lbl.Visible = false; entry.visible = false; return end
+    end
+
+    local pos, onScreen = Camera:WorldToViewportPoint(head.Position + Vector3.new(0, 1.8, 0))
+    if not onScreen then lbl.Visible = false; entry.visible = false; return end
+
+    lbl.Position = Vector2.new(pos.X, pos.Y)
+    lbl.Text     = "@" .. plr.Name
+    lbl.Visible  = true
+    entry.visible = true
+
+    -- Bounding box pour hit-test clic
+    local tb = lbl.TextBounds
+    if tb then
+        local w = tb.X + CFG.padding * 2
+        local h = tb.Y + CFG.padding * 2
+        entry.bbX = pos.X - w / 2
+        entry.bbY = pos.Y - h / 2
+        entry.bbW = w
+        entry.bbH = h
+    end
 end
 
--- ─── Initialisation des joueurs existants ─────────────────────────────────────
-for _, p in Players:GetPlayers() do
-    task.spawn(addESP, p)
+-- ─── 13. Copy ─────────────────────────────────────────────────────────────────
+local function copyPlayer(plr: Player)
+    local at = "@" .. plr.Name
+    _pcall(function() _clip(at) end)
+    showFeed(dec(S.copy) .. plr.Name, CFG.feedColor, 1.5)
 end
-Players.PlayerAdded:Connect(addESP)
-Players.PlayerRemoving:Connect(removeESP)
 
--- ─── Heartbeat principal ──────────────────────────────────────────────────────
--- Throttlé à ~20 Hz (toutes les 3 frames ~60 fps) pour réduire
--- la charge CPU et limiter la surface de détection par profiling.
-local _tick = 0
-RunService.Heartbeat:Connect(function()
-    _tick += 1
-    if _tick % 3 ~= 0 then return end
+-- ─── 14. Toggle ───────────────────────────────────────────────────────────────
+local lastToggle = 0
+local function onToggle()
+    local now = _osclock()
+    if now - lastToggle < 0.15 then return end
+    lastToggle = now
 
-    for player, entry in Cache do
-        -- ESP désactivé : éteindre toutes les entrées et continuer
-        if not ESP_ENABLED then
-            entry.Highlight.Enabled = false
-            entry.Billboard.Enabled = false
-            continue
+    enabled = not enabled
+    if not enabled then
+        for _, entry in Cache do
+            if entry.label then _pcall(function() entry.label.Visible = false end) end
+            entry.visible = false
         end
+    end
+    showFeed(
+        enabled and dec(S.on) or dec(S.off),
+        enabled and CFG.onColor or CFG.offColor,
+        1.5
+    )
+end
 
-        -- Récupération sécurisée du personnage
-        local char = player.Character
-        if not char or not char:IsDescendantOf(workspace) then
-            entry.Highlight.Enabled = false
-            entry.Billboard.Enabled = false
-            continue
-        end
+-- ─── 15. Input · ContextActionService (priorité haute) ───────────────────────
+local ACTION_NAME = "_" .. tostring(_mathrandom(100000, 999999))
+_pcall(function()
+    CAS:BindActionAtPriority(
+        ACTION_NAME,
+        _newcc(function(_, state: Enum.UserInputState)
+            if state == Enum.UserInputState.Begin then
+                onToggle()
+            end
+            return Enum.ContextActionResult.Pass
+        end),
+        false,
+        Enum.ContextActionPriority.High.Value,
+        CFG.key
+    )
+end)
 
-        local hrp = char:FindFirstChild("HumanoidRootPart") :: BasePart?
-        if not hrp then
-            entry.Highlight.Enabled = false
-            entry.Billboard.Enabled = false
-            continue
-        end
+-- ─── 16. Input · InputBegan (fallback T + clic copie) ─────────────────────────
+UIS.InputBegan:Connect(_newcc(function(input: InputObject, gp: boolean)
+    if input.KeyCode == CFG.key then
+        onToggle()
+        return
+    end
 
-        -- Calcul de distance caméra → personnage
-        local dist    = (hrp.Position - Camera.CFrame.Position).Magnitude
-        local inRange = dist <= MAX_DISTANCE
+    if gp then return end
+    if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+    if not enabled then return end
 
-        entry.Highlight.Enabled  = inRange
-        entry.Billboard.Enabled  = inRange
+    local mp = UIS:GetMouseLocation()
+    local mx, my = mp.X, mp.Y
 
-        -- Adornee : corrigé (manquant dans l'original pour le Highlight)
-        if entry.Highlight.Adornee ~= char then
-            entry.Highlight.Adornee = char
-        end
-        if entry.Billboard.Adornee ~= hrp then
-            entry.Billboard.Adornee = hrp
-        end
+    local bestEntry: Entry? = nil
+    local bestDist = math.huge
 
-        -- Mise à jour des labels uniquement si visible
-        if inRange then
-            local jobName, jobColor = getJobInfo(player)
-            local bb    = entry.Billboard
-            local fr    = bb:FindFirstChildOfClass("Frame")
-            if fr then
-                local s  = fr:FindFirstChild("JobStroke")   :: UIStroke?
-                local nl = fr:FindFirstChild("NameLabel")   :: TextLabel?
-                local jl = fr:FindFirstChild("JobLabel")    :: TextLabel?
-                if s  then s.Color       = jobColor end
-                if nl then nl.Text       = "@" .. player.Name end
-                if jl then
-                    jl.Text       = jobName
-                    jl.TextColor3 = jobColor
+    for _, entry in Cache do
+        if entry.visible then
+            if mx >= entry.bbX and mx <= entry.bbX + entry.bbW
+            and my >= entry.bbY and my <= entry.bbY + entry.bbH then
+                if entry.bbY < bestDist then
+                    bestDist  = entry.bbY
+                    bestEntry = entry
                 end
             end
         end
     end
-end)
 
--- ─── Toggle clavier (T) ───────────────────────────────────────────────────────
-UserInputService.InputBegan:Connect(function(input: InputObject, gpe: boolean)
-    if gpe then return end
-    if input.KeyCode == Enum.KeyCode.T then
-        ESP_ENABLED = not ESP_ENABLED
-        notify("ESP", ESP_ENABLED and "Activé" or "Désactivé")
+    if bestEntry then
+        _pcall(copyPlayer, bestEntry.player)
     end
-end)
+end))
 
--- ═════════════════════════════════════════════════════════════════════════════
---  BOUTON FLOTTANT (ScreenGui)
--- ═════════════════════════════════════════════════════════════════════════════
+-- ─── 17. Render loop ──────────────────────────────────────────────────────────
+local lastPoll   = 0
+local lastRender = 0
+local jitter     = 0.033
 
-local screenGui = Instance.new("ScreenGui")
-screenGui.Name           = randomName(10)
-screenGui.ResetOnSpawn   = false
-screenGui.IgnoreGuiInset = true
-screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-local sgOk = pcall(function() screenGui.Parent = CoreGui end)
-if not sgOk or not screenGui.Parent then
-    screenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
-end
+local sig = (RunService :: any).PreRender or RunService.RenderStepped
 
--- Conteneur principal du bouton
-local holder = Instance.new("Frame")
-holder.Name                   = "Holder"
-holder.Size                   = UDim2.fromOffset(64, 64)
-holder.Position               = UDim2.new(1, -80, 0.5, -32)
-holder.BackgroundColor3       = Color3.fromRGB(15, 15, 20)
-holder.BackgroundTransparency = 0.2
-holder.BorderSizePixel        = 0
-holder.Parent                 = screenGui
+sig:Connect(_newcc(function()
+    local now = _osclock()
 
-local holderCorner = Instance.new("UICorner")
-holderCorner.CornerRadius = UDim.new(1, 0)
-holderCorner.Parent       = holder
+    if now - lastPoll >= CFG.pollRate then
+        lastPoll = now
+        _pcall(poll)
+    end
 
-local holderStroke = Instance.new("UIStroke")
-holderStroke.Color     = Color3.fromRGB(0, 255, 140)
-holderStroke.Thickness = 2
-holderStroke.Parent    = holder
-
--- Icône centrale
-local icon = Instance.new("ImageLabel")
-icon.Size                   = UDim2.fromOffset(34, 34)
-icon.Position               = UDim2.new(0.5, -17, 0.5, -17)
-icon.BackgroundTransparency = 1
-icon.Image                  = "rbxassetid://73235408221031"
-icon.ImageColor3            = Color3.fromRGB(0, 255, 140)
-icon.ScaleType              = Enum.ScaleType.Fit
-icon.Parent                 = holder
-
--- Halo lumineux (glow)
-local glow = Instance.new("ImageLabel")
-glow.Size                   = UDim2.fromOffset(80, 80)
-glow.Position               = UDim2.new(0.5, -40, 0.5, -40)
-glow.BackgroundTransparency = 1
-glow.Image                  = "rbxassetid://5028857084"
-glow.ImageColor3            = Color3.fromRGB(0, 255, 140)
-glow.ImageTransparency      = 0.5
-glow.ZIndex                 = 0
-glow.Parent                 = holder
-
--- LED d'état (coin supérieur droit)
-local led = Instance.new("Frame")
-led.Size             = UDim2.fromOffset(10, 10)
-led.Position         = UDim2.new(1, -12, 0, 2)
-led.BackgroundColor3 = Color3.fromRGB(0, 255, 140)
-led.BorderSizePixel  = 0
-led.ZIndex           = 5
-led.Parent           = holder
-
-local ledCorner = Instance.new("UICorner")
-ledCorner.CornerRadius = UDim.new(1, 0)
-ledCorner.Parent       = led
-
-local ledStroke = Instance.new("UIStroke")
-ledStroke.Color     = Color3.fromRGB(255, 255, 255)
-ledStroke.Thickness = 1
-ledStroke.Parent    = led
-
--- Zone d'interaction (bouton transparent par-dessus tout)
-local btn = Instance.new("TextButton")
-btn.Size                   = UDim2.fromScale(1, 1)
-btn.BackgroundTransparency = 1
-btn.Text                   = ""
-btn.ZIndex                 = 10
-btn.Parent                 = holder
-
--- ─── Animation de pulsation du halo ──────────────────────────────────────────
--- Utilise une connexion RenderStepped détruite avec le holder
--- plutôt qu'une boucle `while true` pour éviter les goroutines orphelines.
-local glowConn: RBXScriptConnection
-do
-    local glowPhase  = false
-    local glowClock  = 0
-    local GLOW_PERIOD = 1.2
-
-    glowConn = RunService.Heartbeat:Connect(function(dt: number)
-        -- Vérification que le holder existe encore
-        if not holder.Parent then
-            glowConn:Disconnect()
-            return
+    if now - lastRender >= jitter then
+        lastRender = now
+        jitter     = 0.028 + _mathrandom() * 0.016
+        for _, entry in Cache do
+            _pcall(renderEntry, entry)
         end
-        glowClock += dt
-        if glowClock < GLOW_PERIOD then return end
-        glowClock = 0
-        glowPhase = not glowPhase
-        TweenService:Create(
-            glow,
-            TweenInfo.new(GLOW_PERIOD, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut),
-            { ImageTransparency = glowPhase and 0.35 or 0.7 }
-        ):Play()
-    end)
-end
-
--- ─── Synchronisation visuelle état ESP ───────────────────────────────────────
-local function applyState(enabled: boolean)
-    local col       = enabled and Color3.fromRGB(0, 255, 140) or Color3.fromRGB(255, 70, 90)
-    local tweenInfo = TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-    TweenService:Create(holderStroke, tweenInfo, { Color = col }):Play()
-    TweenService:Create(icon,        tweenInfo, { ImageColor3 = col }):Play()
-    TweenService:Create(glow,        tweenInfo, { ImageColor3 = col }):Play()
-    TweenService:Create(led,         tweenInfo, { BackgroundColor3 = col }):Play()
-    TweenService:Create(ledStroke,   tweenInfo, { Color = col }):Play()
-end
-
--- État visuel initial cohérent avec ESP_ENABLED
-applyState(ESP_ENABLED)
-
--- ─── Drag & tap (tactile) ─────────────────────────────────────────────────────
-local dragging  = false
-local dragStart: Vector3 = Vector3.zero
-local startPos  = holder.Position
-local moved     = false
-
-btn.InputBegan:Connect(function(input: InputObject)
-    if input.UserInputType ~= Enum.UserInputType.Touch then return end
-    dragging  = true
-    moved     = false
-    dragStart = input.Position
-    startPos  = holder.Position
-    TweenService:Create(
-        holder,
-        TweenInfo.new(0.12, Enum.EasingStyle.Quad),
-        { Size = UDim2.fromOffset(58, 58) }
-    ):Play()
-end)
-
-btn.InputChanged:Connect(function(input: InputObject)
-    if not dragging then return end
-    if input.UserInputType ~= Enum.UserInputType.Touch then return end
-    local delta = input.Position - dragStart
-    if delta.Magnitude > 6 then moved = true end
-    holder.Position = UDim2.new(
-        startPos.X.Scale,  startPos.X.Offset  + delta.X,
-        startPos.Y.Scale,  startPos.Y.Offset  + delta.Y
-    )
-end)
-
-btn.InputEnded:Connect(function(input: InputObject)
-    if input.UserInputType ~= Enum.UserInputType.Touch then return end
-    dragging = false
-    TweenService:Create(
-        holder,
-        TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
-        { Size = UDim2.fromOffset(64, 64) }
-    ):Play()
-    if not moved then
-        ESP_ENABLED = not ESP_ENABLED
-        applyState(ESP_ENABLED)
-        notify("ESP", ESP_ENABLED and "Activé" or "Désactivé")
     end
-end)
 
--- ─── Clic souris (desktop) ────────────────────────────────────────────────────
-btn.MouseButton1Click:Connect(function()
-    ESP_ENABLED = not ESP_ENABLED
-    applyState(ESP_ENABLED)
-    notify("ESP", ESP_ENABLED and "Activé" or "Désactivé")
-end)
+    if feedLabel and feedLabel.Visible and now >= feedUntil then
+        feedLabel.Visible = false
+    end
+end))
+
+-- ─── 18. Cleanup ──────────────────────────────────────────────────────────────
+local cleaned = false
+local function cleanup()
+    if cleaned then return end
+    cleaned = true
+    _pcall(function() CAS:UnbindAction(ACTION_NAME) end)
+    for uid, entry in Cache do
+        destroyEntry(entry)
+        Cache[uid] = nil
+    end
+    if feedLabel then _pcall(function() feedLabel:Remove() end) end
+end
+
+LP.AncestryChanged:Connect(_newcc(function(_, p: Instance?)
+    if not p then cleanup() end
+end))
+if script then _pcall(function() script.Destroying:Connect(cleanup) end) end
+
+-- ─── 19. Init (OFF par défaut) ────────────────────────────────────────────────
+showFeed(dec(S.off), CFG.offColor, 2)
